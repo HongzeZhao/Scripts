@@ -17,3 +17,24 @@ do
 
 	test(s)
 end
+
+do
+	s = [==[
+	{
+	    "4\"": "ff",
+	    "first": [
+	        2,
+	        "hello",
+	        7.03,
+	        "\u7654"
+	    ],
+	    "enemy": {
+	        "special": [
+	            "/*[]"
+	        ]
+	    }
+	}
+	]==]
+
+	test(s)
+end
