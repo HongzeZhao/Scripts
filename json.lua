@@ -48,67 +48,69 @@ end
 
 -- get first unempty char
 local get_firstchar = function ( json_str, i )
-	return string.match(json_str, "^%s*(%S)", i)
-end
-
-local parse_array_item = function ( tstack, json_str, i )
-	
-end
-
-local parse_table_item = function ( tstack, json_str, i )
-	-- get the top table
-	local t = tstack[#tstack]
-
-	
-
+	return string.byte(string.match(json_str, "^%s*(%S)", i))
 end
 
 -- convert json data string to lua table
 function Marshal( json_str )
-	local tstack = {{}}
-	local strlen = #json_str
+	local tstack, namestack = {}, {}
+	local strlen = string.find(json_str, "[%]%}]%s*$") -- search the last end char
 	local mode = true  -- true:table ; false:array
 
-	for i = 1, strlen do
-		-- get the top table
-		local t = tstack[#tstack]
-
+	local i = 1
+	while i < strlen do
 		-- find the first bracket symbol
-		local j = string.find(json_str, "^%s*[,%{%[%]%}]", i)
-		local initial_char = string.byte(json_str, j)
+		i = string.find(json_str, "[,%{%[%]%}]", i)
+		local initial_char = string.byte(json_str, i)
+
+		print("init char = " .. string.char(initial_char), string.sub(json_str, i, i + 5), "###")
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
 			initial_char == json_array_begin or   -- [
 			initial_char == json_split then       -- ,
+
+			-- push empty table to stack if begins with { or [
+			if initial_char == json_table_begin or initial_char == json_array_begin then
+				tstack[#tstack + 1] = {}
+				print("push stack size = " .. #tstack)
+			end
+
+			-- statck top table
+			local t = tstack[#tstack]
 			
+			-- parse or make keyname
 			local k, l, keyname, valuestr
-			if initial_char == json_table_begin then
+			if initial_char == json_table_begin or (initial_char == json_split and mode == true) then
 				mode = true
 				-- get key name
-				k, l, keyname = parse_keyname(json_str, j + 1)
+				k, l, keyname = parse_keyname(json_str, i + 1)
 				i = l + 1 -- update current index
-			else
+			elseif initial_char == json_array_begin or (initial_char == json_split and mode == false) then
 				mode = false
 				keyname = tostring(#t + 1)
-				i = j + 1
+				i = i + 1
 			end
 
 			-- whether value or table
 			local firstchar = get_firstchar(json_str, i)
 			if firstchar == json_table_begin or firstchar == json_array_begin then
-				-- create a new table and push it to stack top
-				t[keyname] = {}
-				tstack[#tstack + 1] = t[keyname]
+				namestack[#namestack + 1] = keyname
 			else
 				k, l, valuestr = parse_valuestr(json_str, i)
 				t[keyname] = to_value(valuestr) -- ? how about nil
-				i = l + 1 -- update index
+				i = l -- update index
 			end
+			--print("first char = ".. string.char(firstchar) .." keyname = " .. keyname .. " value = " .. tostring(t[keyname]))
 
 		else -- ] or }
 			-- pop top table element
+			local keyname = namestack[#namestack]
+			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
+			namestack[#namestack] = nil
+			print("stacksize(after) = " .. tostring(#tstack))
+			i = i + 1
 		end
 	end
 
