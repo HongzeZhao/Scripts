@@ -31,10 +31,26 @@ local parse_valuestr = function ( json_str, i )
  	return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
 end
 
+translate_str = function ( valstr )
+	local sgsub = string.gsub
+	local valstr = sgsub(valstr, "\\\"", "\"")
+	valstr = sgsub(valstr, "\\\\", "\\")
+	valstr = sgsub(valstr, "\\/", "/")
+	valstr = sgsub(valstr, "\\b", "\b")
+	valstr = sgsub(valstr, "\\f", "\f")
+	valstr = sgsub(valstr, "\\n", "\n")
+	valstr = sgsub(valstr, "\\r", "\r")
+	valstr = sgsub(valstr, "\\t", "\t")
+	-- translate unicode to utf-8
+	-- http://blog.sina.com.cn/s/blog_415be9600100kxpm.html
+	
+	return valstr
+end
+
 -- conver value string to coresponding lua value
 local to_value = function ( valstr )
 	if string.byte(valstr) == json_quote then  -- a string value
-		return string.sub(valstr, 2, -2)
+		return translate_str(string.sub(valstr, 2, -2))
 	elseif valstr == "null" then -- nil value
 		return nil
 	elseif valstr == "true" then
@@ -53,17 +69,15 @@ end
 
 -- convert json data string to lua table
 function Marshal( json_str )
-	local tstack, namestack = {}, {}
-	local strlen = string.find(json_str, "[%]%}]%s*$") -- search the last end char
-	local mode = true  -- true:table ; false:array
+	local tstack, namestack, modestack = {{}}, {1}, {}
+	local strlen = #json_str
 
 	local i = 1
-	while i < strlen do
+	while i <= strlen do
 		-- find the first bracket symbol
 		i = string.find(json_str, "[,%{%[%]%}]", i)
+		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
-
-		print("init char = " .. string.char(initial_char), string.sub(json_str, i, i + 5), "###")
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
@@ -73,22 +87,26 @@ function Marshal( json_str )
 			-- push empty table to stack if begins with { or [
 			if initial_char == json_table_begin or initial_char == json_array_begin then
 				tstack[#tstack + 1] = {}
-				print("push stack size = " .. #tstack)
+				-- push mode stack
+				if initial_char == json_table_begin then
+					modestack[#modestack + 1] = true        -- table begin
+				else
+					modestack[#modestack + 1] = false
+				end
 			end
 
 			-- statck top table
-			local t = tstack[#tstack]
-			
+			local t, mode = tstack[#tstack], modestack[#modestack]
+
 			-- parse or make keyname
 			local k, l, keyname, valuestr
 			if initial_char == json_table_begin or (initial_char == json_split and mode == true) then
-				mode = true
 				-- get key name
 				k, l, keyname = parse_keyname(json_str, i + 1)
+				keyname = translate_str(keyname)
 				i = l + 1 -- update current index
 			elseif initial_char == json_array_begin or (initial_char == json_split and mode == false) then
-				mode = false
-				keyname = tostring(#t + 1)
+				keyname = #t + 1
 				i = i + 1
 			end
 
@@ -96,25 +114,24 @@ function Marshal( json_str )
 			local firstchar = get_firstchar(json_str, i)
 			if firstchar == json_table_begin or firstchar == json_array_begin then
 				namestack[#namestack + 1] = keyname
+				t[keyname] = keyname
 			else
 				k, l, valuestr = parse_valuestr(json_str, i)
 				t[keyname] = to_value(valuestr) -- ? how about nil
 				i = l -- update index
 			end
-			--print("first char = ".. string.char(firstchar) .." keyname = " .. keyname .. " value = " .. tostring(t[keyname]))
-
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
 			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
 			namestack[#namestack] = nil
-			print("stacksize(after) = " .. tostring(#tstack))
+			modestack[#modestack] = nil
 			i = i + 1
 		end
 	end
 
-	return tstack[1]
+	return tstack[1][1]
 end
 
 -------------------------- Unmarshal ---------------------------
