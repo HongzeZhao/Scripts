@@ -7,15 +7,9 @@ do
 		"Jack" 	:
 		[180, 75.4, "Beijing"],
 		"\"" 	:
-		[175, 70.3, "古巴\u1234"]
+		[175, 70.3, "古巴\u6c49"]
 	}
 	]==]
-
-	--print(json.translate_str("\\/"))
-
-	--print(string.format("%q", "\r\\\r\""))
-
-	print(string.char(230, 177, 137))
 
 	local t = json.Marshal(s)
 
@@ -41,4 +35,11 @@ do
 	}
 	]==]
 
+	local t = json.Marshal(s)
+
+	assert(t["4\""] == "ff")
+	for _, x in ipairs(t.first) do
+		io.write(tostring(x) .. ", ")
+	end
+	io.write("\n")
 end

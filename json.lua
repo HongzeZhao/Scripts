@@ -11,12 +11,12 @@ module("json", package.seeall)
 -------------------------- Marshal -----------------------------
 
 -- notations of json
-json_table_begin = string.byte('{')
-json_table_end = string.byte('}')
-json_array_begin = string.byte('[')
-json_array_end = string.byte(']')
-json_quote = string.byte('"')         -- only double quote is allowed in json
-json_split = string.byte(',')
+local json_table_begin = string.byte('{')
+local json_table_end = string.byte('}')
+local json_array_begin = string.byte('[')
+local json_array_end = string.byte(']')
+local json_quote = string.byte('"')         -- only double quote is allowed in json
+local json_split = string.byte(',')
 
 
 -- get the key string of a json object (table) item, i is the start index
@@ -31,6 +31,25 @@ local parse_valuestr = function ( json_str, i )
  	return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
 end
 
+-- unicode to utf8
+-- http://blog.sina.com.cn/s/blog_415be9600100kxpm.html
+local unicode_utf8 = function ( unicode_str )
+	local x = tonumber(unicode_str, 16)
+	if x <= 0x007f then
+		return string.char(x)
+	elseif x <= 0x07ff then
+		return string.char(
+			bit32.bor(bit32.band(bit32.rshift(x, 6), 0x1f), 0xc0),
+			bit32.bor(bit32.band(x, 0x3f), 0x80))
+	else
+		return string.char(
+			bit32.bor(bit32.band(bit32.rshift(x, 12), 0x0f), 0xe0),
+			bit32.bor(bit32.band(bit32.rshift(x, 6), 0x3f), 0x80),
+			bit32.bor(bit32.band(x, 0x3f), 0x80))
+	end
+end
+
+
 translate_str = function ( valstr )
 	local sgsub = string.gsub
 	local valstr = sgsub(valstr, "\\\"", "\"")
@@ -42,7 +61,7 @@ translate_str = function ( valstr )
 	valstr = sgsub(valstr, "\\r", "\r")
 	valstr = sgsub(valstr, "\\t", "\t")
 	-- translate unicode to utf-8
-	-- http://blog.sina.com.cn/s/blog_415be9600100kxpm.html
+	valstr = sgsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
 	
 	return valstr
 end
@@ -138,5 +157,5 @@ end
 
 -- convert lua table value to json data string
 function Unmarshal( lua_val )
-
+	
 end
