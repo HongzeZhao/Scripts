@@ -4,6 +4,7 @@
 	Module Description:
 		This is a converter module of exchanging json data string
 		and lua table value.
+	Lua Version: 5.2.3
   ]===============================================================]
 
 module("json", package.seeall)
@@ -17,6 +18,7 @@ local json_array_begin = string.byte('[')
 local json_array_end = string.byte(']')
 local json_quote = string.byte('"')         -- only double quote is allowed in json
 local json_split = string.byte(',')
+local json_rsolidus = string.byte('\\')
 
 
 -- get the key string of a json object (table) item, i is the start index
@@ -28,7 +30,22 @@ end
 -- parse the value string and get its value
 -- last matched index returned
 local parse_valuestr = function ( json_str, i )
- 	return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
+	local initial_char = string.match(json_str, "[,%[%{]?%s*(.)", i)
+	if string.byte(initial_char) ~= json_quote then
+ 		return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
+ 	else
+ 		i = string.find("\"", i)
+ 		local j, strlen = i + 1, #json_str
+ 		local tag = false -- whetehr previous character is \
+ 		while j < strlen do
+ 			local ch = string.byte(json_str, j)
+ 			if not tag and ch == json_quote then break
+ 			elseif ch == json_rsolidus then tag = true
+ 			else tag = false end
+ 			j = j + 1
+ 		end
+ 		return string.sub(json_str, i, j)
+ 	end
 end
 
 -- unicode to utf8
@@ -98,6 +115,8 @@ function Marshal( json_str )
 		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
 
+		print('initial_char' .. string.char(initial_char))
+
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
 			initial_char == json_array_begin or   -- [
@@ -142,6 +161,7 @@ function Marshal( json_str )
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
+			print("pop keyname=" .. keyname)
 			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
 			namestack[#namestack] = nil

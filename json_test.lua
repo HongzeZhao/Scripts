@@ -1,7 +1,9 @@
 -- test cases
 require "json"
 
-do
+print(_VERSION)
+
+if false then
 	local s = [==[
 	{
 		"Jack" 	:
@@ -29,7 +31,7 @@ do
 	    ],
 	    "enemy": {
 	        "special": [
-	            "/*[]"
+	            "/*[\",]"
 	        ]
 	    }
 	}
