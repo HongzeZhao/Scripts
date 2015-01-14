@@ -4,6 +4,7 @@
 	Module Description:
 		This is a converter module of exchanging json data string
 		and lua table value.
+	Lua Version: 5.2.3
   ]===============================================================]
 
 module("json", package.seeall)
@@ -17,6 +18,7 @@ local json_array_begin = string.byte('[')
 local json_array_end = string.byte(']')
 local json_quote = string.byte('"')         -- only double quote is allowed in json
 local json_split = string.byte(',')
+local json_rsolidus = string.byte('\\')
 
 
 -- get the key string of a json object (table) item, i is the start index
@@ -28,7 +30,21 @@ end
 -- parse the value string and get its value
 -- last matched index returned
 local parse_valuestr = function ( json_str, i )
- 	return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
+	local k, l, initial_char = string.find(json_str, "[,%[%{]?%s*(.)", i)
+	if string.byte(initial_char) ~= json_quote then
+ 		return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
+ 	else
+ 		local j, strlen = l + 1, #json_str
+ 		local tag = false -- whetehr previous character is \
+ 		while j < strlen do
+ 			local ch = string.byte(json_str, j)
+ 			if not tag and ch == json_quote then break
+ 			elseif ch == json_rsolidus then tag = true
+ 			else tag = false end
+ 			j = j + 1
+ 		end
+ 		return l, j, string.sub(json_str, l, j)
+ 	end
 end
 
 -- unicode to utf8
@@ -49,19 +65,21 @@ local unicode_utf8 = function ( unicode_str )
 	end
 end
 
+local translate_table = {
+	["\\\""] = "\"",
+	["\\\\"] = "\\",
+	["\\/"]  = "/" ,
+	["\\b"]  = "\b",
+	["\\f"]  = "\f",
+	["\\n"]  = "\n",
+	["\\r"]  = "\r",
+	["\\t"]  = "\t"
+}
 
 translate_str = function ( valstr )
-	local sgsub = string.gsub
-	local valstr = sgsub(valstr, "\\\"", "\"")
-	valstr = sgsub(valstr, "\\\\", "\\")
-	valstr = sgsub(valstr, "\\/", "/")
-	valstr = sgsub(valstr, "\\b", "\b")
-	valstr = sgsub(valstr, "\\f", "\f")
-	valstr = sgsub(valstr, "\\n", "\n")
-	valstr = sgsub(valstr, "\\r", "\r")
-	valstr = sgsub(valstr, "\\t", "\t")
+	local valstr = string.gsub(valstr, "\\[\\\"/bfnrt]" , translate_table)
 	-- translate unicode to utf-8
-	valstr = sgsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
+	valstr = string.gsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
 	
 	return valstr
 end
@@ -97,6 +115,8 @@ function Marshal( json_str )
 		i = string.find(json_str, "[,%{%[%]%}]", i)
 		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
+
+		--print('initial_char' .. string.char(initial_char))
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
@@ -142,6 +162,7 @@ function Marshal( json_str )
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
+			--print("pop keyname=" .. keyname)
 			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
 			namestack[#namestack] = nil
@@ -155,7 +176,69 @@ end
 
 -------------------------- Unmarshal ---------------------------
 
+local reverse_translate_table = {
+	["\""] = "\\\"",
+	["\\"] = "\\\\",
+--	["/" ] = "\\/" ,
+	["\b"] = "\\b" ,
+	["\f"] = "\\f" ,
+	["\n"] = "\\n" ,
+	["\r"] = "\\r" ,
+	["\t"] = "\\t"
+}
+
+local function tovalstr( val )
+	if val == nil then
+		return "null"
+	elseif type(val) == "string" then
+		val = string.gsub(val, "[\"\\/\b\f\n\r\t]", reverse_translate_table)
+		return "\"" .. val .. "\""
+	elseif val == true then
+		return "true"
+	elseif val == false then
+		return "false"
+	else
+		return tostring(val)
+	end
+end
+
+local function unmarshal_internal( t, depth, strs )
+	local is_array = true
+
+	for k, v in pairs(t) do
+		if type(k) ~= "number" or k % 1 ~= 0 then
+			is_array = false
+			break
+		end
+	end 
+
+	if is_array then strs[#strs + 1] = "["
+	else strs[#strs + 1] = "{" end
+
+	local has_val = false
+	for k, v in pairs(t) do
+		has_val = true
+		if not is_array then
+			strs[#strs + 1] = tovalstr(k) .. ":"
+		end
+		if type(v) == "table" then
+			unmarshal_internal(v, depth + 1, strs)
+		else
+			strs[#strs + 1] = tovalstr(v)
+		end
+		strs[#strs + 1] = ","
+	end
+	if has_val then strs[#strs] = nil end -- remove the last comma
+
+	if is_array then strs[#strs + 1] = "]"
+	else strs[#strs + 1] = "}" end
+end
+
 -- convert lua table value to json data string
 function Unmarshal( lua_val )
-	
+	local strs = {}
+
+	unmarshal_internal(lua_val, 0, strs)
+
+	return table.concat(strs)
 end
