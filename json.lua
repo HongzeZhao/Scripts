@@ -30,11 +30,12 @@ end
 -- parse the value string and get its value
 -- last matched index returned
 local parse_valuestr = function ( json_str, i )
-	local k, l, initial_char = string.find(json_str, "[,%[%{]?%s*(.)", i)
+	local initial_char = string.match(json_str, "[,%[%{]?%s*(.)", i)
 	if string.byte(initial_char) ~= json_quote then
  		return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
  	else
- 		local j, strlen = l + 1, #json_str
+ 		i = string.find("\"", i)
+ 		local j, strlen = i + 1, #json_str
  		local tag = false -- whetehr previous character is \
  		while j < strlen do
  			local ch = string.byte(json_str, j)
@@ -43,7 +44,7 @@ local parse_valuestr = function ( json_str, i )
  			else tag = false end
  			j = j + 1
  		end
- 		return l, j, string.sub(json_str, l, j)
+ 		return string.sub(json_str, i, j)
  	end
 end
 
@@ -114,7 +115,7 @@ function Marshal( json_str )
 		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
 
-		--print('initial_char' .. string.char(initial_char))
+		print('initial_char' .. string.char(initial_char))
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
@@ -160,7 +161,7 @@ function Marshal( json_str )
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
-			--print("pop keyname=" .. keyname)
+			print("pop keyname=" .. keyname)
 			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
 			namestack[#namestack] = nil
@@ -174,47 +175,7 @@ end
 
 -------------------------- Unmarshal ---------------------------
 
-
-
-local function unmarshal_internal( t, depth, strs )
-	local is_array = true
-
-	for k, v in pairs(t) do
-		if type(k) ~= "number" or k % 1 ~= 0 then
-			is_array = false
-			break
-		end
-	end 
-
-	if is_array then strs[#strs + 1] = "["
-	else strs[#strs + 1] = "{" end
-
-	local space = string.rep("\t", depth)
-
-	local has_val = false
-	for k, v in pairs(t) do
-		has_val = true
-		if not is_array then
-			strs[#strs + 1] = tostring(k) .. ":"
-		end
-		if type(v) == "table" then
-			unmarshal_internal(v, depth + 1, strs)
-		else
-			strs[#strs + 1] = tostring(v)
-		end
-		strs[#strs + 1] = ","
-	end
-	if has_val then strs[#strs] = nil end -- remove the last comma
-
-	if is_array then strs[#strs + 1] = "]\n"
-	else strs[#strs + 1] = "}\n" end
-end
-
 -- convert lua table value to json data string
 function Unmarshal( lua_val )
-	local strs = {}
-
-	unmarshal_internal(lua_val, 0, strs)
-
-	return table.concat(strs)
+	
 end
