@@ -6,10 +6,17 @@ print(_VERSION)
 if true then
 
 	local s = "{}"
-	json.Marshal(s)
+	local t = json.Marshal(s)
+	print(t)
 	s = "[]"
-	json.Marshal(s)
-	
+	t = json.Marshal(s)
+	print(t)
+end
+
+if true then
+	local s = "{\"a\":{}}"
+	local t = json.Marshal(s)
+	print(t.a)
 end
 
 if true then

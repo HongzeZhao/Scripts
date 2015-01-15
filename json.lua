@@ -102,7 +102,7 @@ end
 
 -- get first unempty char
 local get_firstchar = function ( json_str, i )
-	return string.byte(string.match(json_str, "^%s*(%S)", i))
+	return string.byte(string.match(json_str, "%S", i))
 end
 
 -- convert json data string to lua table
@@ -148,6 +148,7 @@ function json.Marshal( json_str )
 
 				if keyname == nil then -- empty object
 					is_empty = true
+					i = i + 1
 				else
 					keyname = translate_str(keyname)
 					i = l + 1 -- update current index
