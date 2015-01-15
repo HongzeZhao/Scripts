@@ -7,7 +7,8 @@
 	Lua Version: 5.2.3
   ]===============================================================]
 
-module("json", package.seeall)
+-- module("json", package.seeall)
+local json = {}
 
 -------------------------- Marshal -----------------------------
 
@@ -30,12 +31,11 @@ end
 -- parse the value string and get its value
 -- last matched index returned
 local parse_valuestr = function ( json_str, i )
-	local initial_char = string.match(json_str, "[,%[%{]?%s*(.)", i)
+	local k, l, initial_char = string.find(json_str, "[,%[%{]?%s*(.)", i)
 	if string.byte(initial_char) ~= json_quote then
  		return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
  	else
- 		i = string.find("\"", i)
- 		local j, strlen = i + 1, #json_str
+ 		local j, strlen = l + 1, #json_str
  		local tag = false -- whetehr previous character is \
  		while j < strlen do
  			local ch = string.byte(json_str, j)
@@ -44,7 +44,7 @@ local parse_valuestr = function ( json_str, i )
  			else tag = false end
  			j = j + 1
  		end
- 		return string.sub(json_str, i, j)
+ 		return l, j, string.sub(json_str, l, j)
  	end
 end
 
@@ -66,19 +66,21 @@ local unicode_utf8 = function ( unicode_str )
 	end
 end
 
+local translate_table = {
+	["\\\""] = "\"",
+	["\\\\"] = "\\",
+	["\\/"]  = "/" ,
+	["\\b"]  = "\b",
+	["\\f"]  = "\f",
+	["\\n"]  = "\n",
+	["\\r"]  = "\r",
+	["\\t"]  = "\t"
+}
 
 translate_str = function ( valstr )
-	local sgsub = string.gsub
-	local valstr = sgsub(valstr, "\\\"", "\"")
-	valstr = sgsub(valstr, "\\\\", "\\")
-	valstr = sgsub(valstr, "\\/", "/")
-	valstr = sgsub(valstr, "\\b", "\b")
-	valstr = sgsub(valstr, "\\f", "\f")
-	valstr = sgsub(valstr, "\\n", "\n")
-	valstr = sgsub(valstr, "\\r", "\r")
-	valstr = sgsub(valstr, "\\t", "\t")
+	local valstr = string.gsub(valstr, "\\[\\\"/bfnrt]" , translate_table)
 	-- translate unicode to utf-8
-	valstr = sgsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
+	valstr = string.gsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
 	
 	return valstr
 end
@@ -100,12 +102,12 @@ end
 
 -- get first unempty char
 local get_firstchar = function ( json_str, i )
-	return string.byte(string.match(json_str, "^%s*(%S)", i))
+	return string.byte(string.match(json_str, "%S", i))
 end
 
 -- convert json data string to lua table
-function Marshal( json_str )
-	local tstack, namestack, modestack = {{}}, {1}, {}
+function json.Marshal( json_str )
+	local tstack, namestack, modestack, indexstack = {{}}, {1}, {}, {}
 	local strlen = #json_str
 
 	local i = 1
@@ -115,7 +117,7 @@ function Marshal( json_str )
 		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
 
-		print('initial_char' .. string.char(initial_char))
+		--print('initial_char' .. string.char(initial_char))
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
@@ -130,38 +132,51 @@ function Marshal( json_str )
 					modestack[#modestack + 1] = true        -- table begin
 				else
 					modestack[#modestack + 1] = false
+					indexstack[#indexstack + 1] = 1
 				end
 			end
 
 			-- statck top table
 			local t, mode = tstack[#tstack], modestack[#modestack]
+			local is_empty = false
 
 			-- parse or make keyname
 			local k, l, keyname, valuestr
 			if initial_char == json_table_begin or (initial_char == json_split and mode == true) then
 				-- get key name
 				k, l, keyname = parse_keyname(json_str, i + 1)
-				keyname = translate_str(keyname)
-				i = l + 1 -- update current index
+
+				if keyname == nil then -- empty object
+					is_empty = true
+					i = i + 1
+				else
+					keyname = translate_str(keyname)
+					i = l + 1 -- update current index
+				end
 			elseif initial_char == json_array_begin or (initial_char == json_split and mode == false) then
-				keyname = #t + 1
+				keyname = indexstack[#indexstack]
+				indexstack[#indexstack] = keyname + 1
 				i = i + 1
 			end
 
-			-- whether value or table
-			local firstchar = get_firstchar(json_str, i)
-			if firstchar == json_table_begin or firstchar == json_array_begin then
-				namestack[#namestack + 1] = keyname
-				t[keyname] = keyname
-			else
-				k, l, valuestr = parse_valuestr(json_str, i)
-				t[keyname] = to_value(valuestr) -- ? how about nil
-				i = l -- update index
+			-- get table or array value
+			if not is_empty then
+				local firstchar = get_firstchar(json_str, i)
+				if firstchar == json_table_begin or firstchar == json_array_begin then
+					namestack[#namestack + 1] = keyname
+					t[keyname] = keyname
+				else
+					k, l, valuestr = parse_valuestr(json_str, i)
+					t[keyname] = to_value(valuestr) -- ? how about nil
+					i = l -- update index
+				end
 			end
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
-			print("pop keyname=" .. keyname)
+			if initial_char == json_array_end then
+				indexstack[#indexstack] = nil
+			end
 			tstack[#tstack - 1][keyname] = tstack[#tstack]
 			tstack[#tstack] = nil
 			namestack[#namestack] = nil
@@ -175,7 +190,80 @@ end
 
 -------------------------- Unmarshal ---------------------------
 
--- convert lua table value to json data string
-function Unmarshal( lua_val )
-	
+local reverse_translate_table = {
+	["\""] = "\\\"",
+	["\\"] = "\\\\",
+--	["/" ] = "\\/" ,
+	["\b"] = "\\b" ,
+	["\f"] = "\\f" ,
+	["\n"] = "\\n" ,
+	["\r"] = "\\r" ,
+	["\t"] = "\\t"
+}
+
+local function tovalstr( val )
+	if val == nil then
+		return "null"
+	elseif type(val) == "string" then
+		val = string.gsub(val, "[\"\\/\b\f\n\r\t]", reverse_translate_table)
+		return string.format("\"%s\"", val)
+	elseif val == true then
+		return "true"
+	elseif val == false then
+		return "false"
+	else
+		return tostring(val)
+	end
 end
+
+local function unmarshal_internal( t, strs )
+
+	-- decide is array/object, empty or not
+	local is_array, is_empty = true, true
+	for k in pairs(t) do
+		is_empty = false
+		if type(k) ~= "number" or k % 1 ~= 0 then -- is array index ?
+			is_array = false
+			break
+		end
+	end
+
+	-- begin bracket : empty table should use object bracket {}
+	if is_array and not is_empty then strs[#strs + 1] = "["
+	else strs[#strs + 1] = "{" end
+
+	-- recursively add string symbols and values
+	local prevk = 1
+	for k, v in pairs(t) do
+		if not is_array then -- output key string
+			strs[#strs + 1] = string.format("%s:", tovalstr(tostring(k)))
+		else -- fill with null
+			if k - prevk > 0 then
+				strs[#strs + 1] = string.rep("null,", k - prevk)
+			end
+			prevk = k + 1
+		end
+		if type(v) == "table" then
+			unmarshal_internal(v, strs)
+		else
+			strs[#strs + 1] = tovalstr(v)
+		end
+		strs[#strs + 1] = ","
+	end
+	
+	if not is_empty then strs[#strs] = nil end -- remove the last comma
+
+	if is_array and not is_empty then strs[#strs + 1] = "]"
+	else strs[#strs + 1] = "}" end
+end
+
+-- convert lua table value to json data string
+function json.Unmarshal( lua_val )
+	local strs = {}
+
+	unmarshal_internal(lua_val, strs)
+
+	return table.concat(strs)
+end
+
+return json
