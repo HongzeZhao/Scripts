@@ -4,8 +4,8 @@
 	Module Description:
 		This is a converter module of exchanging json data string
 		and lua table value.
-	Lua Version: 5.2.3
-  ]===============================================================]
+	Lua Version: 5.2
+--]===============================================================]
 
 -- module("json", package.seeall)
 local json = {}
@@ -21,30 +21,36 @@ local json_quote = string.byte('"')         -- only double quote is allowed in j
 local json_split = string.byte(',')
 local json_rsolidus = string.byte('\\')
 
+-- json_str[i] == "
+local parse_quoted_str = function ( json_str, i)
+	local j, strlen = i + 1, #json_str
+	local tag = false -- whetehr previous character is \
+	while j < strlen do
+		local ch = string.byte(json_str, j)
+		if not tag then
+			if ch == json_quote then break
+			elseif ch == json_rsolidus then tag = true end
+		else tag = false end
+		j = j + 1
+	end
+	return i, j, string.sub(json_str, i, j)
+end
 
--- get the key string of a json object (table) item, i is the start index
--- where the key begins. A valid name string should be quoted with ".
 local parse_keyname = function ( json_str, i )
-	return string.find(json_str, "\"(.-)\"%s*:", i)
+	i = string.find(json_str, "%S", i)
+	if i == nil or string.byte(json_str, i) ~= json_quote then return nil end
+	local k, l = parse_quoted_str(json_str, i)
+	return k, l, string.sub(json_str, k + 1, l - 1)
 end
 
 -- parse the value string and get its value
 -- last matched index returned
-local parse_valuestr = function ( json_str, i )
-	local k, l, initial_char = string.find(json_str, "[,%[%{]?%s*(.)", i)
+local parse_valuestr = function ( json_str, i)
+	local k, l, initial_char = string.find(json_str, "[,%[%{:]?%s*(.)", i)
 	if string.byte(initial_char) ~= json_quote then
- 		return string.find(json_str, "[,%[%{]?%s*(.-)%s*[,%]%}]", i)
+ 		return string.find(json_str, "[,%[%{:]?%s*(.-)%s*[,%]%}]", i)
  	else
- 		local j, strlen = l + 1, #json_str
- 		local tag = false -- whetehr previous character is \
- 		while j < strlen do
- 			local ch = string.byte(json_str, j)
- 			if not tag and ch == json_quote then break
- 			elseif ch == json_rsolidus then tag = true
- 			else tag = false end
- 			j = j + 1
- 		end
- 		return l, j, string.sub(json_str, l, j)
+ 		return parse_quoted_str(json_str, l)
  	end
 end
 
@@ -77,7 +83,7 @@ local translate_table = {
 	["\\t"]  = "\t"
 }
 
-translate_str = function ( valstr )
+local translate_str = function ( valstr )
 	local valstr = string.gsub(valstr, "\\[\\\"/bfnrt]" , translate_table)
 	-- translate unicode to utf-8
 	valstr = string.gsub(valstr, "\\u(%x%x%x%x)", unicode_utf8)
@@ -100,11 +106,6 @@ local to_value = function ( valstr )
 	end
 end
 
--- get first unempty char
-local get_firstchar = function ( json_str, i )
-	return string.byte(string.match(json_str, "%S", i))
-end
-
 -- convert json data string to lua table
 function json.Marshal( json_str )
 	local tstack, namestack, modestack, indexstack = {{}}, {1}, {}, {}
@@ -117,7 +118,7 @@ function json.Marshal( json_str )
 		if i == nil then break end -- end of match
 		local initial_char = string.byte(json_str, i)
 
-		--print('initial_char' .. string.char(initial_char))
+		--print(string.format("i=%d : initchar=%s", i, string.char(initial_char)))
 
 		-- a table key-value table
 		if initial_char == json_table_begin or    -- {
@@ -142,18 +143,21 @@ function json.Marshal( json_str )
 
 			-- parse or make keyname
 			local k, l, keyname, valuestr
-			if initial_char == json_table_begin or (initial_char == json_split and mode == true) then
+			if mode == true then -- {
 				-- get key name
 				k, l, keyname = parse_keyname(json_str, i + 1)
 
-				if keyname == nil then -- empty object
+				if k == nil then -- empty object
 					is_empty = true
 					i = i + 1
+					if string.byte(string.match(json_str, "%S", i)) ~= json_table_end then
+						return nil, "json object key error"
+					end
 				else
 					keyname = translate_str(keyname)
 					i = l + 1 -- update current index
 				end
-			elseif initial_char == json_array_begin or (initial_char == json_split and mode == false) then
+			else -- [
 				keyname = indexstack[#indexstack]
 				indexstack[#indexstack] = keyname + 1
 				i = i + 1
@@ -161,16 +165,19 @@ function json.Marshal( json_str )
 
 			-- get table or array value
 			if not is_empty then
-				local firstchar = get_firstchar(json_str, i)
+				local firstchar = string.byte(string.match(json_str, "[^%s:]", i))
 				if firstchar == json_table_begin or firstchar == json_array_begin then
 					namestack[#namestack + 1] = keyname
 					t[keyname] = keyname
 				else
 					k, l, valuestr = parse_valuestr(json_str, i)
-					t[keyname] = to_value(valuestr) -- ? how about nil
+					t[keyname] = to_value(valuestr)
 					i = l -- update index
 				end
 			end
+
+			--print(string.format("i=%d : keyname=%s(%s), val=%s(%s)", i, keyname, type(keyname), t[keyname], type(t[keyname])))
+
 		else -- ] or }
 			-- pop top table element
 			local keyname = namestack[#namestack]
@@ -201,7 +208,7 @@ local reverse_translate_table = {
 	["\t"] = "\\t"
 }
 
-local function tovalstr( val )
+local function tovalstr ( val )
 	if val == nil then
 		return "null"
 	elseif type(val) == "string" then
@@ -216,7 +223,7 @@ local function tovalstr( val )
 	end
 end
 
-local function unmarshal_internal( t, strs )
+local function unmarshal_internal ( t, strs )
 
 	-- decide is array/object, empty or not
 	local is_array, is_empty = true, true
@@ -258,7 +265,7 @@ local function unmarshal_internal( t, strs )
 end
 
 -- convert lua table value to json data string
-function json.Unmarshal( lua_val )
+function json.Unmarshal ( lua_val )
 	local strs = {}
 
 	unmarshal_internal(lua_val, strs)
