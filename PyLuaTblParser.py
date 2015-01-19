@@ -51,7 +51,7 @@ class PyLuaTblParser:
 	# 读取Lua table数据，输入s为一个符合Lua table定义的字符串，
 	# 无返回值；若遇到Lua table格式错误的应该抛出异常
 	def load(self, s):
-		list_stack, index_stack, name_stack, type_stack = [{}], [], ["result"], [True] # 列表栈，缓存尚未解析完成的列表（dict或array）
+		list_stack, dict_stack, name_stack, type_stack = [[]], [{}], ["result"], [True] # 列表栈，缓存尚未解析完成的列表（dict或array）
 		strlen = len(s) # 字符串长度
 		i = 0
 
@@ -82,6 +82,9 @@ class PyLuaTblParser:
 						end = k
 						break
 				k += 1
+			#当正的长括号后面立即跟了一个换行符， 这个换行符就不包含在这个字符串内
+			if eqcount > 0 and s[begin] == '\n':
+				begin += 1
 			return (True, s[begin: end], end + eqcount + 1)
 
 		def skip(k):
@@ -109,9 +112,9 @@ class PyLuaTblParser:
 				return False
 			else:
 				if all([x in self.intTable for x in valstr]):
-					return string.atol(valstr)
+					return string.atoi(valstr)
 				if any([x in self.hexTable for x in valstr]):
-					return string.atol(valstr, 16)
+					return string.atoi(valstr, 16)
 				elif any([x in self.floatTable for x in valstr]):
 					return string.atof(valstr)
 				else:
@@ -148,10 +151,23 @@ class PyLuaTblParser:
 						strbuf.append(ch)
 				elif in_trans:
 					in_trans = False
-					if ch == 'x':
+					if ch == 'x': # ascii十六进制
 						hexstr = '0x%s' % s[k + 1 : k + 3]
 						trans_ch = chr(int(hexstr, 16))
-					else:
+						k += 2
+					elif ch not in self.transTable:
+						if s[k] in string.digits: # ascii十进制，注意位数
+							ascii = s[k]
+							for j in range(1, 3):
+								if s[k + 1] in string.digits:
+									ascii += s[k + 1]
+									k += 1
+								else:
+									break
+							trans_ch = chr(int(ascii))
+						else:
+							raise Exception("Unsupported Coding")
+					else: #转义字符
 						trans_ch = self.transTable[ch]
 					assert(trans_ch)
 					strbuf.append(trans_ch)
@@ -201,67 +217,68 @@ class PyLuaTblParser:
 			ch = s[i]
 			if ch == "{" or ch == "," or ch == ";":
 				if ch == "{":
-					list_stack.append({}) # 压栈一个新的字典，初始默认都为字典
-					index_stack.append(1) # 下标从1开始
-					type_stack.append(False) # 默认是list
-				t = list_stack[-1] # 栈顶元素
+					dict_stack.append({}) # 压栈一个新的字典，初始默认都为字典
+					list_stack.append([])
+				l = list_stack[-1] # 栈顶元素
+				d = dict_stack[-1]
 				i += 1
 				i = skip(i)
 
 				if s[i] == "{":
-					name_stack.append(index_stack[-1])
-					index_stack[-1] += 1
+					type_stack.append(False) # list item
 					continue
 
 				item = parse_key(i)
 				i = item[0]
 				if item[2]: # is_key : s[i] == '='
 					if item[3]: raise Exception("Invalid Key")
-					if not type_stack[-1]: # 如果是list
-						type_stack[-1] = True # 变成dict
-						old_len = len(t)
-						for k, v in t.items():
-							if v == None:
-								del t[k]
-						tlen = len(t)
-						if tlen != old_len:
-							squeezedt = dict()
-							index = 1
-							for k, v in t.items():
-								squeezedt[index] = v
-								index += 1
-							t = list_stack[-1] = squeezedt
-
 					key = item[1]
 					i += 1
 					i = skip(i)
 					if s[i] == "{":
 						name_stack.append(key)
+						type_stack.append(True) # dict item
 					else:
-						item = parse_value(i)  #3
+						item = parse_value(i)
 						i = item[0]
-						if item[1] != None:
-							t[key] = item[1]
+						d[key] = item[1]
+
 				else:
-					if item[3]: continue
-					if type_stack[-1] and item[1] == None: continue
-					
-					t[index_stack[-1]] = item[1]
-					index_stack[-1] += 1
+					if item[3]: continue # empty field
+					l.append(item[1])
 
 			elif ch == "}":
-				t = list_stack.pop()
-				is_dict = type_stack.pop()
-				if not is_dict:
-					t = [x for _, x in t.items()]
-				name = name_stack.pop()
-				list_stack[-1][name] = t
-				index_stack.pop()
+				d = dict_stack.pop()
+				l = list_stack.pop()
+
+				t = None
+				if len(d) > 0: # 全部变成dict
+					t = d
+					for k, v in t.items():
+						if v == None:
+							del t[k]
+					index = 1
+					for v in l:
+						if v != None:
+							t[index] = v
+						elif index in t:
+							del t[index]
+						index += 1
+				elif len(l) > 0: # list
+					t = l
+				else:
+					t = {}
+
+				if type_stack.pop(): # dict item
+					name = name_stack.pop()
+					dict_stack[-1][name] = t
+				else: # list item
+					list_stack[-1].append(t)
 				i += 1
 			else:
 				raise "Parse Error"
 
-		self.dataDict = list_stack[-1]["result"]
+		self.dataDict = dict_stack[-1]["result"]
 		assert(self.dataDict)
 
 
@@ -288,8 +305,12 @@ class PyLuaTblParser:
 
 
 		def dump_internal(t, depth):
-			if t == None: return ""
-			indent = "\t" * depth
+			indent = "\t" * (depth + 1)
+
+			if len(t) == 0:
+				strbuf.append("{}")
+				return
+
 			strbuf.append("{\n")
 			if type(t) == list:
 				for x in t:
@@ -309,11 +330,11 @@ class PyLuaTblParser:
 						strbuf.append(to_str(v))
 					strbuf.append(",\n")
 			if len(t) > 0: strbuf[-1] = "\n"
-			strbuf.append(indent)
+			strbuf.append('\t' * depth)
 			strbuf.append("}")
-			return "".join(strbuf)
 
-		return dump_internal(self.dataDict, 0)
+		dump_internal(self.dataDict, 0)
+		return "".join(strbuf)
 
 
 
@@ -371,14 +392,32 @@ class PyLuaTblParser:
 		
 		load_internal(d, self.dataDict)
 
+	@staticmethod
+	def deep_copy(d):
+		c = type(d)()
+		if type(d) == dict:
+			for k, v in d.items():
+				if type(v) == list or type(v) == dict:
+					c[k] = PyLuaTblParser.deep_copy(v)
+				elif type(k) != str and type(k) != int and type(k) != long and type(k) != float:
+					continue
+				else:
+					c[k] = v
+		else:
+			for v in d:
+				if type(v) == dict or type(v) == list:
+					c.append(PyLuaTblParser.deep_copy(v))
+				else:
+					c.append(v)
+		return c
 
 	# 返回一个dict，包含类中的数据
 	def dumpDict(self):
-		return self.dataDict
+		return self.deep_copy(self.dataDict)
 
 	# 用字典d更新类中的数据，类似于字典的update
 	def update(self, d):
-		self.dataDict.update(d)
+		self.dataDict.update(deep_copy(d))
 
 	# 支持用[]进行赋值、读写数据的操作，类似字典
 	def __getitem__(self, key):
